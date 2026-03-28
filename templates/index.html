@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Lane Detection — Live Analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>
+    /* ── CSS Reset & Variables ─────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0b0d14;
+      --surface:   #12151f;
+      --surface2:  #1a1e2e;
+      --border:    #252a3d;
+      --accent:    #4f8ef7;
+      --accent2:   #7c3aed;
+      --green:     #22c55e;
+      --orange:    #f97316;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --radius:    14px;
+      --glow:      0 0 30px rgba(79,142,247,.35);
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 20px 40px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(18,21,31,.8);
+      backdrop-filter: blur(12px);
+      position: sticky; top: 0; z-index: 100;
+    }
+
+    .logo-icon {
+      width: 40px; height: 40px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px;
+      box-shadow: var(--glow);
+    }
+
+    header h1 {
+      font-size: 1.25rem; font-weight: 700;
+      background: linear-gradient(90deg, var(--accent), #a78bfa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+
+    header span {
+      font-size: .8rem; color: var(--muted); font-weight: 400;
+      background: none; -webkit-background-clip: unset; -webkit-text-fill-color: unset;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────── */
+    main {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 40px 24px;
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 32px;
+    }
+
+    @media (max-width: 1024px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    /* ── Panel / Card ─────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+
+    .card-title {
+      font-size: .7rem; font-weight: 600; letter-spacing: .1em;
+      text-transform: uppercase; color: var(--muted);
+      margin-bottom: 20px;
+    }
+
+    /* ── Upload Zone ──────────────────────────────────────────── */
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 48px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .25s, background .25s;
+      position: relative;
+    }
+
+    #drop-zone.hover {
+      border-color: var(--accent);
+      background: rgba(79,142,247,.06);
+    }
+
+    #drop-zone input[type="file"] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+
+    #drop-zone .dz-icon {
+      font-size: 42px; margin-bottom: 12px;
+    }
+
+    #drop-zone p { color: var(--muted); font-size: .9rem; line-height: 1.6; }
+    #drop-zone strong { color: var(--text); font-weight: 600; }
+
+    /* ── File preview chip ────────────────────────────────────── */
+    #file-chip {
+      display: none;
+      align-items: center; gap: 10px;
+      margin-top: 16px;
+      padding: 12px 16px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font-size: .85rem;
+    }
+
+    #file-chip .chip-icon { font-size: 20px; }
+    #file-chip .chip-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #file-chip .chip-size { color: var(--muted); font-size: .78rem; }
+    #file-chip .chip-remove {
+      margin-left: auto; cursor: pointer; color: var(--muted);
+      transition: color .2s; font-size: 18px;
+    }
+    #file-chip .chip-remove:hover { color: #ef4444; }
+
+    /* ── Button ───────────────────────────────────────────────── */
+    .btn {
+      width: 100%; padding: 14px;
+      margin-top: 20px;
+      border: none; border-radius: 10px;
+      font-family: inherit; font-size: .95rem; font-weight: 600;
+      cursor: pointer; transition: all .2s;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(79,142,247,.35);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(79,142,247,.5);
+    }
+
+    .btn-primary:disabled {
+      opacity: .45; cursor: not-allowed; transform: none; box-shadow: none;
+    }
+
+    /* ── Progress bar ─────────────────────────────────────────── */
+    #progress-wrap {
+      display: none;
+      margin-top: 20px;
+    }
+
+    #progress-label {
+      display: flex; justify-content: space-between;
+      font-size: .8rem; color: var(--muted); margin-bottom: 8px;
+    }
+
+    #progress-track {
+      height: 6px; border-radius: 99px;
+      background: var(--surface2);
+      overflow: hidden;
+    }
+
+    #progress-bar {
+      height: 100%; width: 0%;
+      background: linear-gradient(90deg, var(--accent), #a78bfa);
+      border-radius: 99px;
+      transition: width .3s ease;
+    }
+
+    /* ── Status badge ─────────────────────────────────────────── */
+    #status-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin-top: 16px; padding: 8px 14px;
+      background: var(--surface2); border-radius: 99px;
+      font-size: .78rem; font-weight: 500;
+    }
+
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .dot.processing { background: var(--accent); animation: pulse 1.2s infinite; }
+    .dot.done       { background: var(--green); }
+    .dot.error      { background: #ef4444; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .3; }
+    }
+
+    /* ── Info tiles ───────────────────────────────────────────── */
+    .info-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 10px; margin-top: 24px;
+    }
+
+    .info-tile {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+
+    .info-tile .label { font-size: .7rem; color: var(--muted); margin-bottom: 4px; }
+    .info-tile .value { font-size: 1.1rem; font-weight: 600; }
+
+    /* ── Viewer panel ─────────────────────────────────────────── */
+    .viewer-col { display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── Main result stream ───────────────────────────────────── */
+    .main-viewer {
+      position: relative;
+      aspect-ratio: 16/9;
+      background: #000;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .main-viewer img {
+      width: 100%; height: 100%; object-fit: contain;
+    }
+
+    .viewer-overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: rgba(11,13,20,.85);
+      gap: 12px;
+      transition: opacity .4s;
+    }
+
+    .viewer-overlay.hidden { opacity: 0; pointer-events: none; }
+
+    .viewer-overlay .ov-icon { font-size: 48px; }
+    .viewer-overlay p { color: var(--muted); font-size: .9rem; text-align: center; }
+
+    /* ── Debug streams grid ───────────────────────────────────── */
+    .debug-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 600px) { .debug-grid { grid-template-columns: 1fr; } }
+
+    .debug-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .debug-card-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      font-size: .75rem; font-weight: 600; color: var(--muted);
+      background: var(--surface2);
+    }
+
+    .debug-tag {
+      padding: 2px 8px; border-radius: 99px;
+      font-size: .65rem; font-weight: 700;
+    }
+
+    .tag-edges  { background: rgba(249,115,22,.15); color: var(--orange); }
+    .tag-roi    { background: rgba(34,197,94,.12);  color: var(--green); }
+
+    .debug-card img {
+      width: 100%;
+      aspect-ratio: 16/9;
+      object-fit: contain;
+      background: #000;
+      display: block;
+    }
+
+    /* ── Legend ───────────────────────────────────────────────── */
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 14px;
+      padding: 16px;
+      border-top: 1px solid var(--border);
+    }
+
+    .legend-item {
+      display: flex; align-items: center; gap: 6px;
+      font-size: .75rem; color: var(--muted);
+    }
+
+    .legend-swatch {
+      width: 18px; height: 4px; border-radius: 2px;
+    }
+
+    /* Scrollbar ───────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--surface); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo-icon">🚗</div>
+  <div>
+    <h1>Lane Detection <span>— Live Analyzer</span></h1>
+  </div>
+</header>
+
+<main>
+  <!-- ── Left panel: upload + controls ───────────────────────────── -->
+  <aside>
+    <div class="card">
+      <p class="card-title">Upload & Run</p>
+
+      <!-- Drop Zone -->
+      <div id="drop-zone">
+        <input type="file" id="file-input" accept="video/*"/>
+        <div class="dz-icon">🎬</div>
+        <p><strong>Drop a video here</strong><br/>or click to browse<br/><small>MP4, AVI, MOV, MKV…</small></p>
+      </div>
+
+      <!-- File chip -->
+      <div id="file-chip">
+        <span class="chip-icon">📹</span>
+        <div>
+          <div class="chip-name" id="chip-name">—</div>
+          <div class="chip-size" id="chip-size">—</div>
+        </div>
+        <span class="chip-remove" id="chip-remove" title="Remove">✕</span>
+      </div>
+
+      <!-- Run button -->
+      <button class="btn btn-primary" id="run-btn" disabled>▶ Run Lane Detection</button>
+
+      <!-- Progress -->
+      <div id="progress-wrap">
+        <div id="progress-label">
+          <span id="prog-text">Processing…</span>
+          <span id="prog-pct">0%</span>
+        </div>
+        <div id="progress-track">
+          <div id="progress-bar"></div>
+        </div>
+      </div>
+
+      <!-- Status -->
+      <div id="status-badge">
+        <div class="dot" id="status-dot"></div>
+        <span id="status-text">Idle — upload a video to start</span>
+      </div>
+
+      <!-- Info tiles -->
+      <div class="info-grid">
+        <div class="info-tile">
+          <div class="label">Frames</div>
+          <div class="value" id="tile-frames">—</div>
+        </div>
+        <div class="info-tile">
+          <div class="label">Status</div>
+          <div class="value" id="tile-status">Idle</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Legend card -->
+    <div class="card" style="margin-top:16px;">
+      <p class="card-title">Visual Legend</p>
+      <div class="legend">
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:#22c55e;"></div>
+          Lane lines (green)
+        </div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:rgba(0,200,255,.7);"></div>
+          Lane fill (cyan)
+        </div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:#f97316;"></div>
+          Edges (Canny)
+        </div>
+        <div class="legend-item">
+          <div class="legend-swatch" style="background:#22c55e;"></div>
+          ROI mask
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Right panel: live streams ────────────────────────────────── -->
+  <div class="viewer-col">
+
+    <!-- Main result -->
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div style="padding:14px 20px 0; border-bottom:1px solid var(--border); padding-bottom:12px; background:var(--surface2);">
+        <p class="card-title" style="margin:0;">Final Output — Lane Overlay</p>
+      </div>
+      <div class="main-viewer">
+        <img id="stream-result" alt="Lane detection output" style="display:none;"/>
+        <div class="viewer-overlay" id="overlay-result">
+          <div class="ov-icon">🛣️</div>
+          <p>Upload and run a video<br/>to see lane detection</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug streams -->
+    <div class="debug-grid">
+      <!-- Edges -->
+      <div class="debug-card">
+        <div class="debug-card-header">
+          <span class="debug-tag tag-edges">EDGES</span>
+          Canny Edge Detection
+        </div>
+        <div style="position:relative;">
+          <img id="stream-edges" alt="Edge map" style="display:none;"/>
+          <div class="viewer-overlay" id="overlay-edges" style="aspect-ratio:16/9; position:relative; background:rgba(11,13,20,1);">
+            <div class="ov-icon">⚡</div>
+            <p style="font-size:.8rem;">Edge map will appear here</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ROI -->
+      <div class="debug-card">
+        <div class="debug-card-header">
+          <span class="debug-tag tag-roi">ROI</span>
+          Region of Interest Mask
+        </div>
+        <div style="position:relative;">
+          <img id="stream-roi" alt="ROI mask" style="display:none;"/>
+          <div class="viewer-overlay" id="overlay-roi" style="aspect-ratio:16/9; position:relative; background:rgba(11,13,20,1);">
+            <div class="ov-icon">📐</div>
+            <p style="font-size:.8rem;">ROI mask will appear here</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let selectedFile  = null;
+let currentJobId  = null;
+let pollInterval  = null;
+
+// ── Element refs ───────────────────────────────────────────────────────────
+const dropZone     = document.getElementById('drop-zone');
+const fileInput    = document.getElementById('file-input');
+const fileChip     = document.getElementById('file-chip');
+const chipName     = document.getElementById('chip-name');
+const chipSize     = document.getElementById('chip-size');
+const chipRemove   = document.getElementById('chip-remove');
+const runBtn       = document.getElementById('run-btn');
+const progressWrap = document.getElementById('progress-wrap');
+const progText     = document.getElementById('prog-text');
+const progPct      = document.getElementById('prog-pct');
+const progressBar  = document.getElementById('progress-bar');
+const statusDot    = document.getElementById('status-dot');
+const statusText   = document.getElementById('status-text');
+const tileFrames   = document.getElementById('tile-frames');
+const tileStatus   = document.getElementById('tile-status');
+
+const streamResult    = document.getElementById('stream-result');
+const streamEdges     = document.getElementById('stream-edges');
+const streamRoi       = document.getElementById('stream-roi');
+const overlayResult   = document.getElementById('overlay-result');
+const overlayEdges    = document.getElementById('overlay-edges');
+const overlayRoi      = document.getElementById('overlay-roi');
+
+// ── Drag & drop ────────────────────────────────────────────────────────────
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('hover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('hover');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('video/')) setFile(f);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) setFile(fileInput.files[0]);
+});
+
+// ── File management ────────────────────────────────────────────────────────
+function setFile(f) {
+  selectedFile = f;
+  chipName.textContent = f.name;
+  chipSize.textContent = formatBytes(f.size);
+  fileChip.style.display = 'flex';
+  dropZone.style.display  = 'none';
+  runBtn.disabled = false;
+}
+
+chipRemove.addEventListener('click', clearFile);
+
+function clearFile() {
+  selectedFile = null;
+  fileInput.value = '';
+  fileChip.style.display = 'none';
+  dropZone.style.display  = 'block';
+  runBtn.disabled = true;
+  resetUI();
+}
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024**2) return (b/1024).toFixed(1) + ' KB';
+  return (b/1024**2).toFixed(1) + ' MB';
+}
+
+// ── Run ────────────────────────────────────────────────────────────────────
+runBtn.addEventListener('click', startJob);
+
+async function startJob() {
+  if (!selectedFile) return;
+
+  // Reset any previous job
+  stopPolling();
+  hideStreams();
+
+  runBtn.disabled = true;
+  setStatus('processing', 'Uploading video…');
+  tileStatus.textContent = 'Uploading';
+  progressWrap.style.display = 'block';
+  setProgress(0, 1);
+
+  const fd = new FormData();
+  fd.append('video', selectedFile);
+
+  let res;
+  try {
+    res = await fetch('/upload', { method: 'POST', body: fd });
+  } catch (e) {
+    setStatus('error', 'Network error: ' + e.message);
+    runBtn.disabled = false;
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    setStatus('error', data.error || 'Upload failed.');
+    runBtn.disabled = false;
+    return;
+  }
+
+  currentJobId = data.job_id;
+  setStatus('processing', 'Processing frames…');
+  tileStatus.textContent = 'Processing';
+
+  // Attach MJPEG streams
+  const base = `/stream/${currentJobId}`;
+  streamResult.src = `${base}/result`;
+  streamEdges.src  = `${base}/edges`;
+  streamRoi.src    = `${base}/roi`;
+
+  showStreams();
+
+  // Poll for progress
+  pollInterval = setInterval(pollStatus, 500);
+}
+
+async function pollStatus() {
+  if (!currentJobId) return;
+  let data;
+  try {
+    const r = await fetch(`/status/${currentJobId}`);
+    data = await r.json();
+  } catch { return; }
+
+  if (data.error) {
+    setStatus('error', 'Error: ' + data.error);
+    stopPolling();
+    runBtn.disabled = false;
+    return;
+  }
+
+  const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
+  setProgress(data.progress, data.total);
+  tileFrames.textContent = `${data.progress} / ${data.total}`;
+
+  if (data.done) {
+    setProgress(data.total, data.total);
+    setStatus('done', `Done — ${data.total} frames processed`);
+    tileStatus.textContent = 'Complete ✓';
+    stopPolling();
+    setTimeout(() => { runBtn.disabled = false; }, 500);
+  }
+}
+
+function stopPolling() {
+  if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+}
+
+// ── UI helpers ─────────────────────────────────────────────────────────────
+function setStatus(kind, msg) {
+  statusDot.className = `dot ${kind}`;
+  statusText.textContent = msg;
+}
+
+function setProgress(current, total) {
+  const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0;
+  progressBar.style.width = pct + '%';
+  progPct.textContent = pct + '%';
+  progText.textContent = current < total ? 'Processing…' : 'Finalising…';
+}
+
+function showStreams() {
+  [streamResult, streamEdges, streamRoi].forEach(el => el.style.display = 'block');
+  [overlayResult, overlayEdges, overlayRoi].forEach(el => el.classList.add('hidden'));
+}
+
+function hideStreams() {
+  [streamResult, streamEdges, streamRoi].forEach(el => { el.style.display = 'none'; el.src = ''; });
+  [overlayResult, overlayEdges, overlayRoi].forEach(el => el.classList.remove('hidden'));
+}
+
+function resetUI() {
+  stopPolling();
+  hideStreams();
+  progressWrap.style.display = 'none';
+  setProgress(0, 1);
+  setStatus('', 'Idle — upload a video to start');
+  tileFrames.textContent = '—';
+  tileStatus.textContent = 'Idle';
+  currentJobId = null;
+}
+</script>
+</body>
+</html>

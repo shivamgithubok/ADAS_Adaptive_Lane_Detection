@@ -5,3 +5,6 @@ dia.py
 video
 yolo8n-seg.pt
 yolo8n.pt
+old
+*.mp4
+bev

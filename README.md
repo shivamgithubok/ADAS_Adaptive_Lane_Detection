@@ -45,15 +45,33 @@ A modern lane detection system built with **Python**, **OpenCV**, and **Flask**.
 
 ### Installation
 
-1. **Clone the repository** (or navigate to the folder).
-2. **Install dependencies**:
+1. **Clone the repository** (or navigate to the project directory).
+2. **Set up the virtual environment & install dependencies**:
+
+   We recommend using `uv` for fast dependency management, but standard `pip` works perfectly too.
+
+   **Using `uv` (Recommended):**
    ```bash
-   pip install -r requirements.txt
-   # Or using the pyproject.toml (recommended)
-   pip install .
+   # Sync dependencies and create a virtual environment
+   uv sync
+   # Activate the virtual environment
+   source .venv/bin/activate
    ```
+
+   **Using standard `pip`:**
+   ```bash
+   # Create a virtual environment
+   python -m venv .venv
+   # Activate it (Linux/macOS)
+   source .venv/bin/activate
+   # Or on Windows: .venv\Scripts\activate
+
+   # Install dependencies
+   pip install -e .
+   ```
+
    > [!NOTE]
-   > The first time you run the app, it will automatically download `yolov8n.pt` (~6MB) for vehicle detection.
+   > The first time you run the app, it will automatically download the YOLOv8 weights (`yolov8n.pt` or `yolo11n-seg.pt`) for vehicle detection.
 
 ---
 

@@ -24,10 +24,49 @@ except ImportError:
     _YOLO_AVAILABLE = False
     print("[WARN] ultralytics not installed — YOLO disabled. pip install ultralytics")
 
+import sys
+import os
+
+_DEPTH_AVAILABLE = False
+_DEPTH_MODEL = None
+try:
+    if os.path.exists('./depth_anything_v2_repo'):
+        sys.path.append('./depth_anything_v2_repo')
+        from depth_anything_v2.dpt import DepthAnythingV2
+        _DEPTH_AVAILABLE = True
+except ImportError:
+    pass
+
+def _init_depth_model():
+    global _DEPTH_MODEL
+    if _DEPTH_MODEL is not None: return
+    print("=========================\nDepth Model Status\n")
+    if not _DEPTH_AVAILABLE or not _TORCH_AVAILABLE:
+        print("Model Loaded : NO\n=========================\n")
+        return
+    try:
+        import torch
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        model = DepthAnythingV2(encoder='vits', features=64, out_channels=[48, 96, 192, 384])
+        model.load_state_dict(torch.load('depth_anything_v2_vits.pth', map_location='cpu'))
+        model.eval().to(device)
+        _DEPTH_MODEL = model
+        print("Model Loaded : YES")
+        print("Model Name : DepthAnythingV2 (vits)")
+        print("Input Size : Dynamic")
+        print("Output Size : Dynamic")
+        print(f"Device : {device.upper()}")
+        print("Inference Time : Sync")
+    except Exception as e:
+        print(f"Model Loaded : NO\nError: {e}")
+    print("=========================\n")
+
+_init_depth_model()
+
 
 class Cfg:
 
-    # ── ROI ────────────────────────────────────────────────────────
+    # ── ROI 
     ROI_BOTTOM_LEFT_X  = 0.10
     ROI_BOTTOM_RIGHT_X = 0.90
     ROI_TOP_LEFT_X     = 0.43
@@ -75,9 +114,21 @@ class Cfg:
     BEV_WIDTH          = 400
     BEV_HEIGHT         = 600
     ROAD_SCALE         = 2.0
-    
+
     # ── [M] Metric Calibration ─────────────────────────────────────
     LANE_WIDTH_M       = 3.7
+
+    # ── [N] Metric Occupancy Grid ──────────────────────────────────
+    # Grid covers GRID_RANGE_M metres ahead and ±GRID_HALF_WIDTH_M laterally.
+    # Each cell is GRID_CELL_M × GRID_CELL_M metres.
+    GRID_RANGE_M       = 60.0    # metres forward
+    GRID_HALF_WIDTH_M  = 7.5     # metres either side of ego
+    GRID_CELL_M        = 0.25    # metres per cell
+    SAFETY_MARGIN_M    = 0.6     # uniform outward expansion of footprint
+    # Temporal smoothing: new_grid = α·new + (1-α)·prev
+    GRID_ALPHA         = 0.55    # higher → faster response to new detections
+    # Minimum track age before the footprint is trusted
+    MIN_TRUST_AGE      = 3
 
     # ── HLS ────────────────────────────────────────────────────────
     WHITE_L_MIN        = 100
@@ -118,11 +169,249 @@ class Cfg:
     ROI_BORDER_COLOR   = (0, 255, 100)
     CAR_BOX_COLOR      = (0,  60, 220)
 
-    # [P6] Debug stream scale (0.5 = half-res, saves ~75% encode time)
     DEBUG_STREAM_SCALE = 0.5
-
-    # Benchmark — set True only for local profiling
     PRINT_BENCHMARK    = False
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Milestone 1 — VehicleFootprint & oriented polygon helpers
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class VehicleFootprint:
+    """
+    Physically correct aligned footprint for a single tracked vehicle.
+
+    Coordinate convention (metric, BEV):
+      X  – lateral  (positive = right of ego)
+      Y  – longitudinal (positive = ahead of ego)
+
+    All *_polygon fields are np.ndarray of shape (4, 2) in metres
+    (footprint) or in BEV pixels (bev_*_polygon).
+    """
+    __slots__ = (
+        'track_id', 'vehicle_class', 'confidence',
+        'center_x', 'center_y',
+        'length', 'width',
+        'footprint_polygon',   # (4,2) metric
+        'safety_polygon',      # (4,2) metric — expanded by SAFETY_MARGIN_M
+        'bev_polygon',         # (4,2) pixels
+        'bev_safety_polygon',  # (4,2) pixels
+        'color',
+        'distance_m', 'velocity_y', 'ttc', 'status',
+        'lane',
+    )
+
+    def __init__(self, track_id, vehicle_class, confidence,
+                 center_x, center_y,
+                 length, width,
+                 footprint_polygon, safety_polygon,
+                 bev_polygon, bev_safety_polygon,
+                 color,
+                 distance_m=None, velocity_y=0.0,
+                 ttc=None, status='GREEN', lane='UNKNOWN'):
+        self.track_id          = track_id
+        self.vehicle_class     = vehicle_class
+        self.confidence        = confidence
+        self.center_x          = center_x
+        self.center_y          = center_y
+        self.length            = length
+        self.width             = width
+        self.footprint_polygon = footprint_polygon
+        self.safety_polygon    = safety_polygon
+        self.bev_polygon       = bev_polygon
+        self.bev_safety_polygon = bev_safety_polygon
+        self.color             = color
+        self.distance_m        = distance_m
+        self.velocity_y        = velocity_y
+        self.ttc               = ttc
+        self.status            = status
+        self.lane              = lane
+
+
+def _aligned_box_polygon(cx_m, cy_m, length, width):
+    """
+    Return a (4,2) float32 array of the four corners of a lane-aligned
+    rectangle (footprint) in the metric BEV plane.
+
+    Args:
+        cx_m, cy_m : vehicle centre in metres (BEV frame)
+        length     : longitudinal size in metres
+        width      : lateral size in metres
+    """
+    half_l = length / 2.0
+    half_w = width  / 2.0
+    # X is lateral (width), Y is longitudinal (length)
+    corners = np.array([
+        [cx_m + half_w, cy_m + half_l], # front-right
+        [cx_m + half_w, cy_m - half_l], # rear-right
+        [cx_m - half_w, cy_m - half_l], # rear-left
+        [cx_m - half_w, cy_m + half_l], # front-left
+    ], dtype=np.float32)
+    return corners
+
+
+def _expand_polygon(poly, margin):
+    """
+    Uniform outward expansion of a convex polygon by `margin` metres.
+    Computes the centroid, then pushes each vertex away along the
+    centroid→vertex direction.
+    """
+    centroid = poly.mean(axis=0)
+    dirs = poly - centroid
+    norms = np.linalg.norm(dirs, axis=1, keepdims=True)
+    norms = np.where(norms < 1e-6, 1.0, norms)   # guard zero-length
+    return poly + margin * (dirs / norms)
+
+
+def _metric_to_bev_pixels(poly_m, bev_w, bev_h, meters_per_pixel):
+    """
+    Convert a (N,2) metric polygon [X_m, Y_m] into BEV pixel coordinates.
+
+    BEV convention (matching existing code):
+      pixel_u = BEV_WIDTH/2  + X_m / meters_per_pixel   (lateral)
+      pixel_v = BEV_HEIGHT   - Y_m / meters_per_pixel   (longitudinal, flipped)
+    """
+    ppm = 1.0 / meters_per_pixel   # pixels per metre
+    px = bev_w / 2.0 + poly_m[:, 0] * ppm
+    py = bev_h        - poly_m[:, 1] * ppm
+    return np.stack([px, py], axis=1).astype(np.int32)
+
+
+def _build_vehicle_footprint(
+        track_id, cls_id, confidence,
+        bev_cx, bev_cy,                # BEV pixel centre
+        x_m, y_m,                      # metric centre (lateral, longitudinal)
+        meters_per_pixel,
+        distance_m, velocity_y,
+        ttc, status, lane,
+        class_names, vehicle_props,
+        bev_w, bev_h):
+    """
+    Construct a VehicleFootprint from the available metric/pixel data.
+    Returns a VehicleFootprint instance.
+    """
+    cls_name = class_names.get(cls_id, 'unknown')
+    length_m, width_m, bgr_color = vehicle_props.get(cls_name,
+                                                      vehicle_props['unknown'])
+
+    if meters_per_pixel <= 0:
+        return None
+
+    # 1. Aligned metric footprint polygon
+    fp_metric = _aligned_box_polygon(x_m, y_m, length_m, width_m)
+
+    # 2. Safety-margin polygon (expanded outward by SAFETY_MARGIN_M)
+    safe_metric = _expand_polygon(fp_metric, Cfg.SAFETY_MARGIN_M)
+
+    # 3. Convert both to BEV pixel space
+    fp_pix   = _metric_to_bev_pixels(fp_metric,   bev_w, bev_h, meters_per_pixel)
+    safe_pix = _metric_to_bev_pixels(safe_metric, bev_w, bev_h, meters_per_pixel)
+
+    return VehicleFootprint(
+        track_id=track_id,
+        vehicle_class=cls_name,
+        confidence=confidence,
+        center_x=x_m,
+        center_y=y_m,
+        length=length_m,
+        width=width_m,
+        footprint_polygon=fp_metric,
+        safety_polygon=safe_metric,
+        bev_polygon=fp_pix,
+        bev_safety_polygon=safe_pix,
+        color=bgr_color,
+        distance_m=distance_m,
+        velocity_y=velocity_y,
+        ttc=ttc,
+        status=status,
+        lane=lane,
+    )
+
+
+# Occupancy grid state (persisted across frames for temporal smoothing)
+_occ_grid_rows = max(1, int(Cfg.GRID_RANGE_M    / Cfg.GRID_CELL_M))
+_occ_grid_cols = max(1, int(Cfg.GRID_HALF_WIDTH_M * 2 / Cfg.GRID_CELL_M))
+_occ_grid = np.zeros((_occ_grid_rows, _occ_grid_cols), dtype=np.float32)
+
+
+def _rasterize_footprints_to_grid(footprints, meters_per_pixel):
+    """
+    Rasterize all vehicle safety polygons into the metric occupancy grid.
+
+    Grid indexing:
+      row 0            = farthest forward (GRID_RANGE_M ahead)
+      row GRID_ROWS-1  = ego front bumper (0 m)
+      col 0            = leftmost  (-GRID_HALF_WIDTH_M)
+      col GRID_COLS-1  = rightmost (+GRID_HALF_WIDTH_M)
+
+    Returns: new uint8 grid (255=occupied, 0=free) and the temporally
+    smoothed float32 grid.
+    """
+    global _occ_grid
+
+    rows = _occ_grid_rows
+    cols = _occ_grid_cols
+    cell = Cfg.GRID_CELL_M
+    half_w = Cfg.GRID_HALF_WIDTH_M
+    rng    = Cfg.GRID_RANGE_M
+
+    new_grid = np.zeros((rows, cols), dtype=np.float32)
+
+    for fp in footprints:
+        if fp is None:
+            continue
+        # Convert metric safety polygon corners → grid cell indices
+        # X_m → col:  col = (X_m + half_w) / cell
+        # Y_m → row:  row = (rng - Y_m)    / cell   (row 0 = farthest)
+        poly_m = fp.safety_polygon  # (4,2): X_m, Y_m
+        col_f  = (poly_m[:, 0] + half_w) / cell
+        row_f  = (rng - poly_m[:, 1])    / cell
+        grid_poly = np.stack([col_f, row_f], axis=1).astype(np.int32)
+        # fillPoly expects (N,1,2) in (x=col, y=row) order
+        grid_poly_cv = grid_poly[:, np.newaxis, :]
+        cv2.fillPoly(new_grid, [grid_poly_cv], 1.0)
+
+    # Temporal smoothing
+    _occ_grid = Cfg.GRID_ALPHA * new_grid + (1.0 - Cfg.GRID_ALPHA) * _occ_grid
+    return (_occ_grid >= 0.35).astype(np.uint8) * 255
+
+
+def _draw_footprint_on_bev(bev_img, fp: VehicleFootprint):
+    """
+    Render a VehicleFootprint onto the BEV image.
+    Draws: filled footprint polygon, safety-margin outline,
+    ID + distance text.
+    """
+    color     = fp.color
+    safe_col  = tuple(max(0, c - 60) for c in color)   # slightly darker
+
+    # Filled vehicle footprint
+    cv2.fillPoly(bev_img, [fp.bev_polygon.reshape(-1, 1, 2)], color)
+    # White outline of actual footprint
+    cv2.polylines(bev_img, [fp.bev_polygon.reshape(-1, 1, 2)],
+                  True, (255, 255, 255), 1, cv2.LINE_AA)
+    # Dashed-effect safety margin (draw outline in translucent darker tone)
+    cv2.polylines(bev_img, [fp.bev_safety_polygon.reshape(-1, 1, 2)],
+                  True, safe_col, 1, cv2.LINE_AA)
+
+    # TTC-based status colour for label
+    lbl_col = (0, 255, 0)
+    if fp.status == 'RED':
+        lbl_col = (0, 0, 255)
+    elif fp.status == 'YELLOW':
+        lbl_col = (0, 220, 255)
+
+    label_x = fp.bev_polygon[:, 0].min()
+    label_y = fp.bev_polygon[:, 1].min() - 16
+    cv2.putText(bev_img,
+                f"ID{fp.track_id}  {fp.distance_m:.1f}m" if fp.distance_m is not None
+                else f"ID{fp.track_id}",
+                (int(label_x), int(label_y)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, lbl_col, 1, cv2.LINE_AA)
+    cls_short = fp.vehicle_class[:3].upper()
+    cv2.putText(bev_img, cls_short,
+                (int(label_x), int(label_y) + 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (200, 200, 200), 1, cv2.LINE_AA)
 
 
 def get_vehicle_contact_point(mask):
@@ -291,7 +580,6 @@ class _AsyncCarDetector:
                 self._last_boxes = np.hstack([xyxy_scaled, conf, cls_ids, track_ids, contacts_x, contacts_y, contacts_dx, contacts_dy]).tolist()
                 self._last_masks = mask_list
 
-    # ── called from pipeline thread every frame ───────────────────
     def detect(self, frame):
         """
         Non-blocking: submits frame to worker every YOLO_EVERY_N frames,
@@ -303,13 +591,11 @@ class _AsyncCarDetector:
         if not Cfg.USE_YOLO or not _YOLO_AVAILABLE:
             return [], []
 
-        # Only submit a new frame if the worker is ready (queue not full)
-        if self._frame_idx % 1 == 0:     # every frame — worker decides pace
+        if self._frame_idx % 1 == 0:
             try:
-                # drop_if_full: discard old frame, never block pipeline
                 self._in_q.put_nowait(frame.copy())
             except queue.Full:
-                pass    # worker still busy — use cached result
+                pass
 
         with self._boxes_lock:
             return list(self._last_boxes), list(self._last_masks)
@@ -352,11 +638,6 @@ def mask_cars(lane_mask, car_boxes):
 
     return result
 
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  [J] Car-based ROI top
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 def car_based_roi_top(car_boxes, frame_h, frame_w):
     if not Cfg.USE_CAR_ROI or not car_boxes:
         return None
@@ -372,9 +653,6 @@ def car_based_roi_top(car_boxes, frame_h, frame_w):
     return float(np.clip(roi_y, Cfg.ROI_TOP_MIN, Cfg.ROI_TOP_MAX))
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  HLS lane mask  [P4] returns gray to avoid double conversion
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def hls_lane_mask(frame):
     hls = cv2.cvtColor(frame, cv2.COLOR_BGR2HLS)
@@ -523,10 +801,7 @@ def _fit(lines_group):
         return tuple(np.mean(lines_group, axis=0))
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Slope filter + cross clamp
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
+#
 def filter_and_fit(lines, h, w, roi_top_frac):
     ls, li, rs, ri = [], [], [], []
     if lines is None:
@@ -581,9 +856,6 @@ class _Smoother:
         return avg(self._L), avg(self._R)
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Debug vis
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def build_hls_vis(lane_mask, car_boxes):
     vis = cv2.cvtColor(lane_mask, cv2.COLOR_GRAY2BGR)
@@ -599,9 +871,6 @@ def build_hls_vis(lane_mask, car_boxes):
     return vis
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Drawing  [P7] np.where blend instead of addWeighted + copy
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 _FILL_COLOR_NP = np.array(Cfg.FILL_COLOR, dtype=np.uint8)
 
@@ -696,10 +965,6 @@ def draw_overlay(frame, left, right, roi_polygon, calibrated, car_boxes, car_mas
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, roi_color, 1, cv2.LINE_AA)
     return out
 
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Phase 1.5 - Validation & Lane Assignment
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def assign_lane(cx, cy, left_line, right_line, w):
     if cx is None or cy is None or cx == -1 or cy == -1:
@@ -814,21 +1079,14 @@ class _HomographyTracker:
         else:
             return self.H_fixed, self.fixed_src_pts, self.current_lane_pts
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Module-level singletons
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 _smoother   = _Smoother(Cfg.SMOOTH_FRAMES)
 _ema_cross  = _EMA(alpha=Cfg.EMA_ALPHA)
 _calibrator = _AutoCalibrator()
-_detector   = _AsyncCarDetector()          # [P5] async
+_detector   = _AsyncCarDetector()          
 _homography = _HomographyTracker()
 _track_states = {}
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Phase 8 - Behavior Planner
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 from enum import Enum
 
@@ -894,20 +1152,38 @@ def detect_lanes(frame):
 
     h, w = frame.shape[:2]
 
-    # [P5] Non-blocking: submit frame, get latest cached boxes
     car_boxes, car_masks = _detector.detect(frame)
+    
+    debug_frames = {}
+    print("YOLO Detection\n↓")
 
-    # [A] HLS mask — [P4] also returns gray
+    depth_map = None
+    if _DEPTH_MODEL is not None:
+        depth_map = _DEPTH_MODEL.infer_image(frame)
+        print("Depth Map\n↓")
+        d_min, d_max = depth_map.min(), depth_map.max()
+        d_mean, d_std = depth_map.mean(), depth_map.std()
+        print("Depth Statistics")
+        print(f"Min Depth : {d_min:.2f}")
+        print(f"Max Depth : {d_max:.2f}")
+        print(f"Mean Depth : {d_mean:.2f}")
+        print(f"Std : {d_std:.2f}\n")
+        
+        depth_norm = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        depth_colored = cv2.applyColorMap(depth_norm, cv2.COLORMAP_INFERNO)
+        debug_frames["Depth Debug"] = depth_colored
+        debug_frames["RGB + Depth Overlay"] = frame.copy()
+        debug_frames["3D Box Debug"] = frame.copy()
+    else:
+        print("PIPELINE BROKEN AT:\nDepth Map\n")
+
     masked_gray, raw_mask, gray = hls_lane_mask(frame)
 
-    # [I] Subtract cars
     clean_mask  = mask_cars(raw_mask, car_boxes)
     masked_gray = cv2.bitwise_and(gray, clean_mask)
 
-    # [B] Otsu Canny
     edges = otsu_canny(masked_gray)
 
-    # [F][H][J] Dynamic ROI top
     car_top = car_based_roi_top(car_boxes, h, w)
     if Cfg.USE_AUTOCAL:
         cal_top = _calibrator.update(_ema_cross.value, h)
@@ -920,7 +1196,6 @@ def detect_lanes(frame):
         )
     top_y_frac = max(cal_top, car_top) if car_top is not None else cal_top
 
-    # [G] Pentagon ROI
     roi_masked, roi_vis, roi_poly = apply_roi(edges, h, w, top_y_frac)
 
     # Hough
@@ -932,18 +1207,14 @@ def detect_lanes(frame):
         maxLineGap=Cfg.HOUGH_MAX_GAP,
     )
 
-    # [C][D] Filter + fit
     left_raw, right_raw, cross_y = filter_and_fit(lines, h, w, top_y_frac)
 
-    # [F] EMA update
     _ema_cross.update(cross_y)
     if Cfg.USE_AUTOCAL:
         _calibrator.update(cross_y, h)
 
-    # [E] Smooth
     left, right = _smoother.update(left_raw, right_raw)
 
-    # [L] BEV Homography
     H, src_pts, lane_pts = _homography.update(left, right, w)
     
     lane_w_top, lane_w_bot, road_w_top, road_w_bot = _homography.widths
@@ -968,23 +1239,32 @@ def detect_lanes(frame):
         print(f"ROAD_BL=({int(f_pts[2][0])},{int(f_pts[2][1])})")
         print(f"ROAD_BR=({int(f_pts[3][0])},{int(f_pts[3][1])})\n")
     
-    if H is not None:
-        det_H = np.linalg.det(H)
-        print(f"det(H)={det_H:.6f}")
-        if abs(det_H) < 1e-6:
-            print("WARNING: DEGENERATE HOMOGRAPHY")
+    homography_engine = None
+    try:
+        from phase_02_geometry.homography import Homography
+        homography_engine = Homography()
+    except Exception as e:
+        print("Failed to load Phase 2 Homography:", e)
+
+    if homography_engine is not None and homography_engine.H_inv is not None:
+        det_H = np.linalg.det(homography_engine.H_inv)
+        print(f"det(H_inv)={det_H:.6f}")
             
         pts_to_proj = np.array([[[pt[0], pt[1]]] for pt in lane_pts], dtype=np.float32)
-        proj_lane_pts = cv2.perspectiveTransform(pts_to_proj, H)
-        p_tl, p_tr, p_bl, p_br = proj_lane_pts[:, 0, :]
-        lane_w_px_top = p_tr[0] - p_tl[0]
-        lane_w_px_bot = p_br[0] - p_bl[0]
-        lane_w_px = (lane_w_px_top + lane_w_px_bot) / 2.0
+        proj_lane_pts = homography_engine.project_points(pts_to_proj)
         
-        meters_per_pixel = Cfg.LANE_WIDTH_M / max(1.0, lane_w_px)
-        
-        print(f"Lane Width BEV = {lane_w_px:.1f} px")
-        print(f"Meters Per Pixel = {meters_per_pixel:.4f} m/px\n")
+        if proj_lane_pts is not None and len(proj_lane_pts) > 0:
+            p_tl, p_tr, p_bl, p_br = proj_lane_pts[:, 0, :]
+            lane_w_px_top = p_tr[0] - p_tl[0]
+            lane_w_px_bot = p_br[0] - p_bl[0]
+            lane_w_px = (lane_w_px_top + lane_w_px_bot) / 2.0
+            
+            meters_per_pixel = homography_engine.MPP
+            
+            print(f"Lane Width BEV = {lane_w_px:.1f} px")
+            print(f"Meters Per Pixel = {meters_per_pixel:.4f} m/px\n")
+        else:
+            meters_per_pixel = homography_engine.MPP
     else:
         meters_per_pixel = 0.0
 
@@ -992,19 +1272,19 @@ def detect_lanes(frame):
     bev_vis = np.zeros((Cfg.BEV_HEIGHT, Cfg.BEV_WIDTH, 3), dtype=np.uint8)
     cv2.rectangle(bev_vis, (0, 0), (Cfg.BEV_WIDTH, Cfg.BEV_HEIGHT), (0, 40, 0), -1)
     
-    if src_pts is not None and H is not None:
+    if src_pts is not None and homography_engine is not None:
         pts_to_project = np.array([[[pt[0], pt[1]]] for pt in lane_pts], dtype=np.float32)
-        proj_lane_pts = cv2.perspectiveTransform(pts_to_project, H)
-        p_tl, p_tr, p_bl, p_br = proj_lane_pts[:, 0, :]
-        
-        cv2.line(bev_vis, (int(p_tl[0]), int(p_tl[1])), (int(p_bl[0]), int(p_bl[1])), (0, 255, 0), 2)
-        cv2.line(bev_vis, (int(p_tr[0]), int(p_tr[1])), (int(p_br[0]), int(p_br[1])), (0, 255, 0), 2)
-        
-        cx_top = int((p_tl[0] + p_tr[0]) / 2)
-        cx_bot = int((p_bl[0] + p_br[0]) / 2)
-        cv2.line(bev_vis, (cx_top, int(p_tl[1])), (cx_bot, int(p_bl[1])), (255, 255, 255), 1)
+        proj_lane_pts = homography_engine.project_points(pts_to_project)
+        if proj_lane_pts is not None and len(proj_lane_pts) > 0:
+            p_tl, p_tr, p_bl, p_br = proj_lane_pts[:, 0, :]
+            
+            cv2.line(bev_vis, (int(p_tl[0]), int(p_tl[1])), (int(p_bl[0]), int(p_bl[1])), (0, 255, 0), 2)
+            cv2.line(bev_vis, (int(p_tr[0]), int(p_tr[1])), (int(p_br[0]), int(p_br[1])), (0, 255, 0), 2)
+            
+            cx_top = int((p_tl[0] + p_tr[0]) / 2)
+            cx_bot = int((p_bl[0] + p_br[0]) / 2)
+            cv2.line(bev_vis, (cx_top, int(p_tl[1])), (cx_bot, int(p_bl[1])), (255, 255, 255), 1)
 
-    # [K] Phase 1.5 Validation & Output
     lane_counts = {"LEFT": 0, "CENTER": 0, "RIGHT": 0}
     decorated_boxes = []
     
@@ -1043,14 +1323,80 @@ def detect_lanes(frame):
             validity = "VALID"
             lane_side = assign_lane(cx, cy, left, right, w)
             
-            print(f"ID={tid}")
-            print(f"IMG=({cx},{cy})")
+            print(f"==================================\nVehicle ID : {tid}")
+            print(f"YOLO Class : {cls_id}\nBBox")
+            print(f"x1 : {int(box[0])}\ny1 : {int(box[1])}\nx2 : {int(box[2])}\ny2 : {int(box[3])}")
+            
+            vehicle_depth = None
+            if depth_map is not None:
+                x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+                roi_depth = depth_map[y1:y2, x1:x2]
+                if roi_depth.size > 0:
+                    med_d = np.median(roi_depth)
+                    mean_d = np.mean(roi_depth)
+                    min_d = np.min(roi_depth)
+                    max_d = np.max(roi_depth)
+                    std_d = np.std(roi_depth)
+                    vehicle_depth = med_d
+                    print("Depth Pixels")
+                    print(f"Total Pixels : {roi_depth.size}")
+                    print(f"Median Depth : {med_d:.2f}")
+                    print(f"Mean Depth : {mean_d:.2f}")
+                    print(f"Minimum : {min_d:.2f}")
+                    print(f"Maximum : {max_d:.2f}")
+                    print(f"Depth Std : {std_d:.2f}\n")
+                    
+                    cv2.putText(debug_frames["RGB + Depth Overlay"], f"ID={tid}", (x1, y1 - 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    cv2.putText(debug_frames["RGB + Depth Overlay"], f"Depth={med_d:.1f}m", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    cv2.rectangle(debug_frames["RGB + Depth Overlay"], (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    
+                    print("Depth Value\n↓")
+                    
+                    fx, fy = w, w
+                    u0, v0 = w/2, h/2
+                    Z = med_d
+                    X_cam = (cx - u0) * Z / fx
+                    Y_cam = (cy - v0) * Z / fy
+                    print("Camera Coordinates")
+                    print(f"X : {X_cam:.2f}")
+                    print(f"Y : {Y_cam:.2f}")
+                    print(f"Z : {Z:.2f}\n")
+                    
+                    print("Camera Coordinates\n↓")
+                    
+                    length_m, width_m, _ = VEHICLE_PROPS.get(CLASS_NAMES.get(cls_id, 'unknown'), VEHICLE_PROPS['unknown'])
+                    height_m = 1.6
+                    half_l, half_w = length_m/2, width_m/2
+                    corners_3d = np.array([
+                        [-half_w, -height_m, half_l], [half_w, -height_m, half_l],
+                        [half_w, 0, half_l], [-half_w, 0, half_l],
+                        [-half_w, -height_m, -half_l], [half_w, -height_m, -half_l],
+                        [half_w, 0, -half_l], [-half_w, 0, -half_l]
+                    ])
+                    corners_cam = corners_3d + np.array([X_cam, Y_cam, Z])
+                    proj_x = (corners_cam[:, 0] * fx / corners_cam[:, 2]) + u0
+                    proj_y = (corners_cam[:, 1] * fy / corners_cam[:, 2]) + v0
+                    corners_2d = np.stack((proj_x, proj_y), axis=1).astype(int)
+                    
+                    edges = [(0,1), (1,2), (2,3), (3,0), (4,5), (5,6), (6,7), (7,4), (0,4), (1,5), (2,6), (3,7)]
+                    for pt1, pt2 in edges:
+                        cv2.line(debug_frames["3D Box Debug"], tuple(corners_2d[pt1]), tuple(corners_2d[pt2]), (0, 255, 255), 2)
+                    
+                    cv2.putText(debug_frames["3D Box Debug"], f"ID:{tid} {CLASS_NAMES.get(cls_id, 'unknown')} D:{Z:.1f}m", (corners_2d[0][0], corners_2d[0][1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+                    
+                    print("3D Box\n↓")
+                else:
+                    print("Depth Pixels\nTotal Pixels : 0\n")
+                    print("PIPELINE BROKEN AT:\nDepth Value\n")
+            else:
+                print("PIPELINE BROKEN AT:\nDepth Value\n")
+            
+            print("==================================")
             
             bx, by = None, None
-            if H is not None:
-                pt = np.array([[[float(cx), float(cy)]]], dtype=np.float32)
-                bev_pt = cv2.perspectiveTransform(pt, H)
-                bx_raw, by_raw = int(bev_pt[0][0][0]), int(bev_pt[0][0][1])
+            if homography_engine is not None:
+                bev_pt = homography_engine.project_point(float(cx), float(cy))
+                bx_raw, by_raw = bev_pt
                 
                 print(f"RAW_BEV=({bx_raw},{by_raw})")
                 
@@ -1082,11 +1428,15 @@ def detect_lanes(frame):
                     print(f"Y={y_m:.1f} m")
                     
                     if tid not in _track_states:
-                        _track_states[tid] = {'history': deque(maxlen=15), 'vx_ema': 0.0, 'vy_ema': 0.0, 'age': 0}
-                        
+                        _track_states[tid] = {
+                            'history': deque(maxlen=15),
+                            'vx_ema': 0.0, 'vy_ema': 0.0,
+                            'age': 0,
+                        }
+
                     state = _track_states[tid]
                     state['age'] += 1
-                    
+
                     vx_ema = state['vx_ema']
                     vy_ema = state['vy_ema']
                     
@@ -1109,7 +1459,7 @@ def detect_lanes(frame):
                             else:
                                 vx_ema = 0.2 * vx_inst + 0.8 * state['vx_ema']
                                 vy_ema = 0.2 * vy_inst + 0.8 * state['vy_ema']
-                                
+
                             state['vx_ema'] = vx_ema
                             state['vy_ema'] = vy_ema
                             
@@ -1143,24 +1493,47 @@ def detect_lanes(frame):
                     
                     bx, by = bx_raw, by_raw
                     
-                    cls_name = CLASS_NAMES.get(cls_id, "unknown")
-                    length_m, width_m, bgr_color = VEHICLE_PROPS.get(cls_name, VEHICLE_PROPS["unknown"])
-                    
-                    if meters_per_pixel > 0:
-                        len_px = int(length_m / meters_per_pixel)
-                        wid_px = int(width_m / meters_per_pixel)
+                    cls_name = CLASS_NAMES.get(cls_id, 'unknown')
+                    length_m, width_m, bgr_color = VEHICLE_PROPS.get(cls_name, VEHICLE_PROPS['unknown'])
+
+                    # Build physically correct aligned footprint
+                    fp = None
+                    if meters_per_pixel > 0 and state['age'] >= Cfg.MIN_TRUST_AGE:
+                        print("Footprint Source\nSTATIC\n")
+                        print("Vehicle")
+                        print(f"Length (meters) : {length_m:.2f}")
+                        print(f"Width (meters) : {width_m:.2f}")
+                        print(f"Pixel Length : {int(length_m / meters_per_pixel)}")
+                        print(f"Pixel Width : {int(width_m / meters_per_pixel)}")
+                        print("Source\nSTATIC\n")
+                        print("Ground Footprint\n↓")
+                        print("BEV\n↓")
                         
-                        cv2.rectangle(bev_vis, (bx - wid_px//2, by - len_px//2),
-                                      (bx + wid_px//2, by + len_px//2), bgr_color, -1)
-                                      
-                        cv2.putText(bev_vis, f"ID {tid}", (bx - wid_px//2, by - len_px//2 - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, bgr_color, 1)
-                        cv2.putText(bev_vis, f"{y_m:.1f} m", (bx - wid_px//2, by - len_px//2 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-                    
-                    print(f"Vehicle:\nID={tid}\nClass={cls_name}\nFootprint:\nLength={length_m}m\nWidth={width_m}m")
-                    print(f"Pixel:\nL={int(length_m / max(0.0001, meters_per_pixel))} px\nW={int(width_m / max(0.0001, meters_per_pixel))} px")
-                    print(f"Center:\nX={x_m:.1f}m\nY={y_m:.1f}m\n")
-                    
-                    decorated_box = list(box) + [lane_side, validity, y_m, rel_speed, ttc, status, tid, length_m, width_m, cls_name]
+                        fp = _build_vehicle_footprint(
+                            track_id=tid,
+                            cls_id=cls_id,
+                            confidence=float(box[4]) if len(box) > 4 else 1.0,
+                            bev_cx=bx, bev_cy=by,
+                            x_m=x_m, y_m=y_m,
+                            meters_per_pixel=meters_per_pixel,
+                            distance_m=y_m,
+                            velocity_y=rel_speed,
+                            ttc=ttc,
+                            status=status,
+                            lane=lane_side,
+                            class_names=CLASS_NAMES,
+                            vehicle_props=VEHICLE_PROPS,
+                            bev_w=Cfg.BEV_WIDTH,
+                            bev_h=Cfg.BEV_HEIGHT,
+                        )
+                        if fp is not None:
+                            _draw_footprint_on_bev(bev_vis, fp)
+
+                    print(f"Vehicle:\nID={tid}\nClass={cls_name}")
+                    print(f"Footprint: L={length_m}m  W={width_m}m")
+                    print(f"Center: X={x_m:.1f}m  Y={y_m:.1f}m\n")
+
+                    decorated_box = list(box) + [lane_side, validity, y_m, rel_speed, ttc, status, tid, length_m, width_m, cls_name, fp]
                     decorated_boxes.append(decorated_box)
                     
                 else:
@@ -1175,9 +1548,9 @@ def detect_lanes(frame):
                         cv2.circle(bev_vis, (bx_raw, by_raw), 6, color, -1)
                         cv2.putText(bev_vis, f"ID={tid}", (bx_raw + 10, by_raw), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                         
-                    decorated_boxes.append(list(box) + ["UNKNOWN", "INVALID", None, None, None, None, tid, 4.5, 1.8, "unknown"])
+                    decorated_boxes.append(list(box) + ['UNKNOWN', 'INVALID', None, None, None, None, tid, 4.5, 1.8, 'unknown', None])
             else:
-                decorated_boxes.append(list(box) + ["UNKNOWN", "INVALID", None, None, None, None, tid, 4.5, 1.8, "unknown"])
+                decorated_boxes.append(list(box) + ['UNKNOWN', 'INVALID', None, None, None, None, tid, 4.5, 1.8, 'unknown', None])
             
             print("")
             
@@ -1185,14 +1558,13 @@ def detect_lanes(frame):
                 lane_counts[lane_side] += 1
                 
         else:
-            decorated_boxes.append(list(box) + ["UNKNOWN", "INVALID", None, None, None, None, None, 4.5, 1.8, "unknown"])
+            decorated_boxes.append(list(box) + ['UNKNOWN', 'INVALID', None, None, None, None, None, 4.5, 1.8, 'unknown', None])
             
     active_tids = {b[17] for b in decorated_boxes if len(b) > 17 and b[17] is not None}
     stale = [t for t in _track_states if t not in active_tids]
     for t in stale:
         del _track_states[t]
         
-    # Phase 5 - Lane Occupancy Map
     lane_occupancy = {"LEFT": [], "CENTER": [], "RIGHT": []}
     for b in decorated_boxes:
         if len(b) > 17 and b[12] == "VALID":
@@ -1204,24 +1576,56 @@ def detect_lanes(frame):
     for lane in lane_occupancy:
         lane_occupancy[lane].sort(key=lambda x: x[13]) # closest first
         
-    # Phase 7.1 - Free Space Grid with 30m Planning Horizon
     PLANNING_HORIZON = 30.0
+
+    # ── Metric occupancy grid (replaces 3×20 boolean array) ────────
+    # Collect all valid footprints for rasterization
+    valid_footprints = [
+        b[-1] for b in decorated_boxes
+        if len(b) > 20 and b[12] == 'VALID' and b[-1] is not None
+    ]
+    occ_grid_bin = _rasterize_footprints_to_grid(valid_footprints, meters_per_pixel)
+
+    # Reconstruct the 3×20 boolean grid from the metric grid for the
+    # existing BehaviorPlanner API (lane-column × distance-row cells).
+    # Each lane column maps to a lateral slice of the metric grid.
     free_grid = np.zeros((3, 20), dtype=bool)
     cell_len_m = PLANNING_HORIZON / 20.0
-    lane_to_col = {"LEFT": 0, "CENTER": 1, "RIGHT": 2}
-    
-    for b in decorated_boxes:
-        if len(b) > 17 and b[12] == "VALID":
-            lane = b[11]
-            y_m = b[13]
-            length_m = b[18]
-            if lane in lane_to_col and y_m is not None and y_m <= PLANNING_HORIZON:
-                col = lane_to_col[lane]
-                occ_len = length_m + 0.5
-                start_row = int(max(0.0, y_m - occ_len/2) / cell_len_m)
-                end_row = int(min(PLANNING_HORIZON - 0.001, y_m + occ_len/2) / cell_len_m)
-                for r in range(start_row, min(20, end_row + 1)):
-                    free_grid[col][r] = True
+    lane_to_col = {'LEFT': 0, 'CENTER': 1, 'RIGHT': 2}
+
+    grid_total_cols = _occ_grid_cols
+    # Ego occupies the centre third of the lateral grid
+    col_left_start  = 0
+    col_left_end    = grid_total_cols // 3
+    col_center_start = grid_total_cols // 3
+    col_center_end   = 2 * grid_total_cols // 3
+    col_right_start  = 2 * grid_total_cols // 3
+    col_right_end    = grid_total_cols
+
+    lane_col_slices = {
+        'LEFT':   (col_left_start,   col_left_end),
+        'CENTER': (col_center_start, col_center_end),
+        'RIGHT':  (col_right_start,  col_right_end),
+    }
+    rows_per_cell = max(1, int(cell_len_m / Cfg.GRID_CELL_M))
+    occ_grid_rows_total = _occ_grid_rows
+
+    for lane_name, (cs, ce) in lane_col_slices.items():
+        col_idx = lane_to_col[lane_name]
+        for cell_idx in range(20):
+            # cell 0 = nearest to ego (0→1.5 m), cell 19 = farthest
+            # Grid row 0 = farthest, so farthest row in occ_grid is index 0
+            # Distance from ego front:  y_start = cell_idx * cell_len_m
+            y_start = cell_idx * cell_len_m
+            y_end   = y_start + cell_len_m
+            # Convert metric Y to grid row indices (row 0 = GRID_RANGE_M ahead)
+            row_start = max(0, int((Cfg.GRID_RANGE_M - y_end)   / Cfg.GRID_CELL_M))
+            row_end   = min(occ_grid_rows_total - 1,
+                            int((Cfg.GRID_RANGE_M - y_start) / Cfg.GRID_CELL_M))
+            if row_end >= row_start:
+                slice_region = occ_grid_bin[row_start:row_end + 1, cs:ce]
+                if slice_region.any():
+                    free_grid[col_idx][cell_idx] = True
                     
     print("Lane Assessment:")
     bev_y_offset = 20
@@ -1249,7 +1653,7 @@ def detect_lanes(frame):
                 gaps.append(max(0.0, gap))
             gaps.append(max(0.0, PLANNING_HORIZON - (cars[-1][13] + (cars[-1][18] + 0.5)/2)))
             largest_gap = max(gaps)
-            
+
         free_cells = 20 - np.sum(free_grid[i])
         free_ratio = free_cells / 20.0
         
@@ -1345,7 +1749,6 @@ def detect_lanes(frame):
         lane_pts=lane_pts
     )
 
-    # [P6] Downscale debug frames — cheaper to encode & stream
     if Cfg.DEBUG_STREAM_SCALE != 1.0:
         dw = max(1, int(w * Cfg.DEBUG_STREAM_SCALE))
         dh = max(1, int(h * Cfg.DEBUG_STREAM_SCALE))
@@ -1354,13 +1757,26 @@ def detect_lanes(frame):
 
     if Cfg.PRINT_BENCHMARK:
         print(f"[BENCHMARK] {(time.perf_counter()-_t0)*1000:.1f}ms")
+        
+    if "Ground Footprint Debug" not in debug_frames:
+        gfd = np.zeros((Cfg.BEV_HEIGHT, Cfg.BEV_WIDTH, 3), dtype=np.uint8)
+        cv2.rectangle(gfd, (0, 0), (Cfg.BEV_WIDTH, Cfg.BEV_HEIGHT), (0, 40, 0), -1)
+        if src_pts is not None and H is not None:
+            cv2.line(gfd, (int(p_tl[0]), int(p_tl[1])), (int(p_bl[0]), int(p_bl[1])), (255, 255, 255), 2)
+            cv2.line(gfd, (int(p_tr[0]), int(p_tr[1])), (int(p_br[0]), int(p_br[1])), (255, 255, 255), 2)
+        if meters_per_pixel > 0:
+            cv2.rectangle(gfd, (ex - ego_wid_px//2, ey - ego_len_px//2),
+                          (ex + ego_wid_px//2, ey + ego_len_px//2), (255, 255, 255), -1)
+            cv2.putText(gfd, "EGO", (ex - 15, ey + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 0), 1)
+        for box in decorated_boxes:
+            fp = box[-1]
+            if fp is not None:
+                cv2.polylines(gfd, [fp.bev_polygon.reshape(-1, 1, 2)], True, fp.color, 2, cv2.LINE_AA)
+                cv2.putText(gfd, f"ID{fp.track_id}", (int(fp.bev_polygon[:,0].min()), int(fp.bev_polygon[:,1].min()-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        debug_frames["Ground Footprint Debug"] = gfd
 
-    return result, hls_vis, roi_vis, bev_vis
+    return result, hls_vis, roi_vis, bev_vis, debug_frames
 
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-#  Standalone runner
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def process_video(source=0, show_debug=False):
     cap = cv2.VideoCapture(source)
@@ -1371,12 +1787,14 @@ def process_video(source=0, show_debug=False):
     while True:
         ret, frame = cap.read()
         if not ret: break
-        result, hls_vis, roi_vis, bev_vis = detect_lanes(frame)
+        result, hls_vis, roi_vis, bev_vis, debug_frames = detect_lanes(frame)
         cv2.imshow("Lane Detection", result)
         cv2.imshow("Bird Eye View", bev_vis)
         if debug:
             cv2.imshow("HLS + Cars", hls_vis)
             cv2.imshow("ROI Edges",  roi_vis)
+            for k, v in debug_frames.items():
+                cv2.imshow(k, v)
         key = cv2.waitKey(1) & 0xFF
         if   key == ord('q'): break
         elif key == ord('d'): debug = not debug
@@ -1389,11 +1807,13 @@ def process_image(path):
     frame = cv2.imread(path)
     if frame is None:
         print(f"[ERROR] Cannot read: {path}"); return
-    result, hls_vis, roi_vis, bev_vis = detect_lanes(frame)
+    result, hls_vis, roi_vis, bev_vis, debug_frames = detect_lanes(frame)
     cv2.imshow("Lane Detection", result)
     cv2.imshow("Bird Eye View", bev_vis)
     cv2.imshow("HLS + Cars",     hls_vis)
     cv2.imshow("ROI Edges",      roi_vis)
+    for k, v in debug_frames.items():
+        cv2.imshow(k, v)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 

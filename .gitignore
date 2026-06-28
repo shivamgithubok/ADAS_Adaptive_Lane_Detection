@@ -8,3 +8,14 @@ yolo8n.pt
 old
 *.mp4
 bev
+testing_video
+uploads
+logs
+diagnostics
+depth_anything_v2_repo
+*.pth
+phase_00_profiling.py
+test_run.py
+vehicle_state.py
+*.pt
+.venv_gpu

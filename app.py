@@ -94,7 +94,7 @@ def process_video_job(job_id: str, video_path: str):
 
         # detect_lanes() is the heavy work; time it
         t0 = time.perf_counter()
-        result, hls_vis, roi_vis, bev_vis = detect_lanes(frame)
+        result, hls_vis, roi_vis, bev_vis, _ = detect_lanes(frame)
         t1 = time.perf_counter()
 
         frame_ms = (t1 - t0) * 1000.0

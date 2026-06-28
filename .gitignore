@@ -19,3 +19,5 @@ test_run.py
 vehicle_state.py
 *.pt
 .venv_gpu
+lane_detection.py
+gather_info.py

@@ -24,9 +24,8 @@ class Projector:
         sy = calib_h / frame_h
         
         # Step 3: Print scaling info once every 30 frames
-        if frame_idx % 30 == 0 and v_obj.track_id == 1: # Print once per 30 frames, attempt to use first vehicle to avoid spam
-            pass # We will just print if frame_idx % 30 == 0 but we want to avoid spamming per vehicle. Better to print in run.py? Actually, I'll just print if v_obj.track_id == (some id) or just print once per call.
-            
+        if frame_idx % 30 == 0 and v_obj.track_id == 1:
+            pass
         # Step 2: Project Ground Contact with scaling
         # Ensure left is actually left
         orig_left = v_obj.ground_left
@@ -44,11 +43,7 @@ class Projector:
         right_pt = (orig_right[0] * sx, orig_right[1] * sy)
         center_pt = (orig_center[0] * sx, orig_center[1] * sy)
 
-        # Step 4: Debug print
-        if v_obj.track_id == 6 or v_obj.track_id == 1: # arbitrary debug vehicle
-            print(f"\n--- Vehicle {v_obj.track_id} ---")
-            print(f"Original image point: ({int(orig_left[0])}, {int(orig_left[1])})")
-            print(f"Scaled calibration point: ({int(left_pt[0])}, {int(left_pt[1])})")
+        # Step 4: Debug print removed
 
         # Step 2 & 3: Homography and Raw coordinates
         raw_l = self.homography.project_point_raw(left_pt[0], left_pt[1])
@@ -59,9 +54,6 @@ class Projector:
         bev_right = self.homography.project_point(right_pt[0], right_pt[1])
         bev_center_img = self.homography.project_point(center_pt[0], center_pt[1])
         
-        if v_obj.track_id == 6 or v_obj.track_id == 1:
-            print(f"Projected BEV point: ({int(bev_left[0])}, {int(bev_left[1])})")
-
         # Step 4: Validate every projected point
         reject_reason = None
         for name, raw_pt, bev_pt in [("Left", raw_l, bev_left), ("Center", raw_c, bev_center_img), ("Right", raw_r, bev_right)]:

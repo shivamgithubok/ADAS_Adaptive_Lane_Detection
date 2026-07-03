@@ -58,7 +58,6 @@ class FootprintStabilizer:
             print(f"Vehicle {vg.id} rejected at Input. Reason: Validation status is not Valid")
             return None, debug_geometry
             
-        print("✓ Mask")
 
         sx = homography.calib_width / frame_w
         sy = homography.calib_height / frame_h
@@ -140,7 +139,6 @@ class FootprintStabilizer:
             print(f"Vehicle {vg.id} rejected at Ground Strip. Reason: No valid strips found")
             return None, debug_geometry
             
-        print("✓ Ground Strip")
 
         # Phase 3: ADAPTIVE STRIP FUSION
         total_weight = 0
@@ -193,7 +191,6 @@ class FootprintStabilizer:
             filtered_pts = cloud_pts
         debug_geometry["filtered_points"] = filtered_pts
 
-        print("✓ Projection")
 
         # Phase 5: CONVEX HULL
         if len(filtered_pts) < 3:
@@ -202,12 +199,10 @@ class FootprintStabilizer:
             
         hull = cv2.convexHull(filtered_pts)
         debug_geometry["convex_hull"] = hull
-        print("✓ Hull")
 
         # Phase 6: MINIMUM AREA RECTANGLE
         rect = cv2.minAreaRect(filtered_pts)
         debug_geometry["min_area_rect"] = rect
-        print("✓ Rectangle")
 
         # Phase 7: PCA ORIENTATION
         mean, eigenvectors, eigenvalues = cv2.PCACompute2(filtered_pts, np.empty((0)))
@@ -222,7 +217,6 @@ class FootprintStabilizer:
             'mean': mean[0], 'major': major_vec, 'minor': minor_vec, 'eigenvalues': eigenvalues
         }
         debug_geometry["orientation_vector"] = orientation
-        print("✓ PCA")
 
         # Phase 10: QUALITY & CONFIDENCE (Filters Disabled)
         mask_completeness = min(100.0, (len(valid_strips) / 5.0) * 100.0)
@@ -288,7 +282,6 @@ class FootprintStabilizer:
             debug_geometry["history_polygons"].append(raw_box.copy())
             
         debug_geometry["history_length"] = hist_length
-        print("✓ History")
 
         fg = FootprintGeometry(
             vehicle_id=vg.id,

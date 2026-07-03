@@ -114,7 +114,7 @@ class StabilizationVisualizer:
             cv2.putText(panel, text, (15, y_off), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
             y_off += 25
             
-        for fg, debug_data, vme in vehicles_debug_list:
+        for fg, debug_data, vme, dim_est in vehicles_debug_list:
             if fg is None or debug_data is None:
                 continue
                 
@@ -195,18 +195,32 @@ class StabilizationVisualizer:
             draw_text(f"--- ID {fg.vehicle_id} ---", color)
             
             if vme:
+                draw_text(f"Source: Geometry Only", (255, 255, 255))
                 draw_text(f"Distance: {vme.distance_m:.1f} m")
-                draw_text(f"Meters/Pixel: {vme.meters_per_pixel:.4f}")
-                draw_text(f"Obs Width px: {vme.observed_width_px:.1f}")
-                draw_text(f"Obs Width m: {vme.observed_width_m:.2f}")
-                draw_text(f"Cor Width m: {vme.corrected_width_m:.2f}", (0, 255, 0))
-                draw_text(f"Obs Length px: {vme.observed_length_px:.1f}")
-                draw_text(f"Obs Length m: {vme.observed_length_m:.2f}")
-                draw_text(f"Cor Length m: {vme.corrected_length_m:.2f}", (0, 255, 0))
-                draw_text(f"Correction %: {corr_pct:+.1f}%")
-            
+                heading = debug_data.get("heading", 0.0)
+                draw_text(f"Heading: {heading:.1f} deg")
+                draw_text(f"Ground Width: {vme.observed_width_m:.2f} m")
+                
+                ground_pts = len(debug_data.get("filtered_points", [])) if debug_data.get("filtered_points") is not None else 0
+                draw_text(f"Ground Pixels: {ground_pts}")
+                
+                # Show Geometry Footprint only
+                draw_text(f"Estimated Footprint Width: {vme.observed_width_m:.2f} m", (0, 255, 0))
+                draw_text(f"Estimated Footprint Length: {vme.observed_length_m:.2f} m", (0, 255, 0))
+                
+                conf = vme.correction_confidence
+                draw_text(f"Projection Confidence: {conf:.1f}%")
+                
+                temporal = debug_data.get("temporal_stability", 0.0) * 100
+                draw_text(f"Temporal Stability: {temporal:.1f}%")
+                
+                hull = debug_data.get("hull_consistency", 0.0) * 100
+                draw_text(f"Heading Stability: {hull:.1f}%")
+                
+                qual = debug_data.get("quality", 0.0) * 100
+                draw_text(f"Geometry Confidence: {qual:.1f}%")
+                
             y_off += 5
             
-            print(f"Vehicle {fg.vehicle_id} - Metric estimate computed.")
 
         return canvas, panel

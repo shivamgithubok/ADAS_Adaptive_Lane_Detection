@@ -90,6 +90,26 @@ You can also run a local OpenCV window preview:
 python lane_detection.py path/to/video.mp4 --debug
 ```
 
+### Run Individual Phases
+To run the specific phases of the pipeline directly from the command line:
+
+- **Phase 00 (Profiling)**:
+  ```bash
+  python phase_00_profiling.py
+  ```
+- **Phase 01 (Perception)**:
+  ```bash
+  python phase_01_perception/run.py   --video "path_of viedo"
+  ```
+- **Phase 02 (Geometry)**:
+  ```bash
+  python phase_02_geometry/run.py  --video "path_of viedo"
+  ```
+- **Phase 03 (Lane Detection)**:
+  ```bash
+  python phase_03_lane/run.py --video "path_of viedo"
+  ```
+
 ---
 
 ## 🔍 How It Works (Week 3 Pipeline)

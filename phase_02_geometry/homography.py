@@ -96,3 +96,28 @@ class Homography:
         pts = np.array([[[x, y]]], dtype=np.float32)
         img_pts = cv2.perspectiveTransform(pts, self.H)
         return tuple(img_pts[0, 0])
+
+    def project_3d_to_image(self, x_px, y_px, h_obj_m):
+        """
+        Projects a 3D point defined by its BEV canvas pixel (x_px, y_px) 
+        and its physical height off the ground (h_obj_m in meters) 
+        back to the 2D image plane (u, v).
+        """
+        # 1. Convert BEV pixels to physical camera coordinates (meters)
+        # x_px = 400 + X_c * PPM => X_c = (x_px - 400) / PPM
+        # y_px = 800 - Z_c * PPM => Z_c = (800 - y_px) / PPM
+        X_c = (x_px - 400.0) / self.PPM
+        Z_c = (800.0 - y_px) / self.PPM
+        
+        if Z_c <= 0:
+            return (float('inf'), float('inf'))
+            
+        # 2. Camera Y coordinate (camera Y goes down, so ground is +height, 
+        # object top is height - h_obj_m)
+        Y_c = self.height - h_obj_m
+        
+        # 3. Pinhole projection
+        u = self.fx * (X_c / Z_c) + self.cx
+        v = self.fy * (Y_c / Z_c) + self.cy
+        
+        return (int(u), int(v))

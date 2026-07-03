@@ -1,0 +1,16 @@
+{
+    "global_avg_width": 0.4795433761159601,
+    "global_avg_length": 0.9844880751416095,
+    "global_avg_proj_conf": 100.0,
+    "global_avg_temp_stab": 89.85638699924414,
+    "heading_std_dev": 54.75613613054433,
+    "correlations": {
+        "dist_width": 0.2249783934737982,
+        "dist_length": 0.16825901046775146,
+        "ground_px_width": NaN,
+        "ground_px_length": NaN,
+        "proj_conf_width": NaN,
+        "temp_stab_width": 0.2041518440583184
+    },
+    "conclusion": "CASE B Geometry is stable. Metric dimensions are limited by visible ground contact."
+}

@@ -1,0 +1,152 @@
+GEOMETRY VALIDATION REPORT
+==========================
+
+Vehicle 1
+Distance		2.9-3.5 m
+Recovered Width		0.09-0.42 m
+Recovered Length	0.43-1.34 m
+Std Dev Width		0.05 m
+Std Dev Length		0.25 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 2
+Distance		3.9-4.8 m
+Recovered Width		0.37-0.75 m
+Recovered Length	0.62-1.25 m
+Std Dev Width		0.08 m
+Std Dev Length		0.14 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 3
+Distance		4.5-4.8 m
+Recovered Width		0.53-0.69 m
+Recovered Length	0.68-0.88 m
+Std Dev Width		0.03 m
+Std Dev Length		0.07 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 4
+Distance		4.7-5.0 m
+Recovered Width		0.46-0.58 m
+Recovered Length	0.75-1.03 m
+Std Dev Width		0.03 m
+Std Dev Length		0.05 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 5
+Distance		3.2-4.5 m
+Recovered Width		0.14-0.80 m
+Recovered Length	0.43-1.44 m
+Std Dev Width		0.12 m
+Std Dev Length		0.21 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 6
+Distance		5.0-5.4 m
+Recovered Width		0.41-0.74 m
+Recovered Length	0.85-1.25 m
+Std Dev Width		0.06 m
+Std Dev Length		0.07 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 7
+Distance		5.0-5.3 m
+Recovered Width		0.30-0.44 m
+Recovered Length	0.88-1.14 m
+Std Dev Width		0.04 m
+Std Dev Length		0.06 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 8
+Distance		4.9-5.3 m
+Recovered Width		0.27-0.34 m
+Recovered Length	0.86-1.10 m
+Std Dev Width		0.02 m
+Std Dev Length		0.07 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 17
+Distance		4.7-5.4 m
+Recovered Width		0.31-0.48 m
+Recovered Length	0.69-1.10 m
+Std Dev Width		0.04 m
+Std Dev Length		0.08 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 19
+Distance		4.3-4.4 m
+Recovered Width		0.23-0.47 m
+Recovered Length	0.82-0.99 m
+Std Dev Width		0.07 m
+Std Dev Length		0.06 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 20
+Distance		5.1-5.4 m
+Recovered Width		0.31-0.50 m
+Recovered Length	0.83-1.17 m
+Std Dev Width		0.05 m
+Std Dev Length		0.11 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 21
+Distance		5.3-5.3 m
+Recovered Width		0.20-0.31 m
+Recovered Length	1.07-1.17 m
+Std Dev Width		0.03 m
+Std Dev Length		0.02 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 22
+Distance		3.8-4.7 m
+Recovered Width		0.14-0.78 m
+Recovered Length	0.66-1.22 m
+Std Dev Width		0.14 m
+Std Dev Length		0.14 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 25
+Distance		5.3-5.4 m
+Recovered Width		0.25-0.79 m
+Recovered Length	1.45-1.64 m
+Std Dev Width		0.17 m
+Std Dev Length		0.05 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+Vehicle 33
+Distance		5.3-5.4 m
+Recovered Width		0.36-0.44 m
+Recovered Length	1.12-1.14 m
+Std Dev Width		0.02 m
+Std Dev Length		0.01 m
+Projection Confidence	100%
+Conclusion		Geometry stable, metric dimensions incomplete
+
+GLOBAL REPORT
+--------------------
+Average Width			0.48 m
+Average Length			0.98 m
+Average Projection Confidence	100.0%
+Average Temporal Stability	89.9%
+Average Footprint Stability	93.6%
+Average Heading Stability	54.76 deg std
+
+FINAL SCIENTIFIC CONCLUSION
+--------------------
+CASE B
+Geometry is stable.
+Metric dimensions are limited by visible ground contact.

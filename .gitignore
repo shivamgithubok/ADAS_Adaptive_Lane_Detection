@@ -21,3 +21,7 @@ vehicle_state.py
 .venv_gpu
 lane_detection.py
 gather_info.py
+audit_output
+docs
+Ultra-Fast-Lane-Detection-V2
+lane_model

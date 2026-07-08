@@ -1,4 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cu121
+
 opencv-python
 numpy
 flask
 scikit-learn
+ultralytics
+PyYAML
+matplotlib
+torch
+torchvision

@@ -1,0 +1,20 @@
+# Vehicle Detection Configuration
+target_classes: [2, 3, 5, 7] # 2=car, 3=motorcycle, 5=bus, 7=truck
+conf_threshold: 0.5
+min_bbox_height: 15
+min_bbox_area: 200
+min_mask_area: 100
+min_ground_pixels: 10
+min_contour_size: 5
+
+# Ground Contact Region Config
+strip_ratio: 0.10
+min_strip_pixels: 4
+max_strip_pixels: 20
+
+# Quality Weights
+quality_thresholds:
+  mask_area_weight: 20
+  ground_pixels_weight: 30
+  ground_width_weight: 30
+  contact_geometry_weight: 20

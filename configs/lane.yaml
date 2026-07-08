@@ -1,0 +1,5 @@
+# Lane Detection Configuration
+odz_filter:
+  lateral_margin_m: 1.0
+  longitudinal_margin_m: 5.0
+  min_confidence: 0.5

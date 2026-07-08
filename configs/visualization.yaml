@@ -1,0 +1,34 @@
+# Visualization Settings
+colors:
+  mask: [0, 255, 0]         # Green
+  bbox: [255, 255, 255]     # White
+  text: [255, 255, 255]
+  strip: [0, 255, 255]      # Yellow
+  left_contact: [0, 0, 255] # Red (BGR)
+  right_contact: [255, 0, 0]  # Blue (BGR)
+  center_contact: [255, 255, 0]
+  ground_line: [0, 255, 255]
+  lane_left: [0, 255, 255]
+  lane_right: [255, 0, 255]
+  lane_center: [0, 255, 0]
+
+alpha:
+  mask: 0.4
+  strip: 0.3
+
+thickness:
+  bbox: 2
+  strip: 2
+  text: 2
+
+radius:
+  contact: 4
+
+font_scale:
+  label: 0.5
+  fps: 1.0
+
+debug:
+  draw_strip: true
+  draw_contact_points: true
+  ground_contact: true

@@ -26,13 +26,18 @@ A modern lane detection system built with **Python**, **OpenCV**, and **Flask**.
 
 ```text
 .
-├── app.py              # Flask server and MJPEG stream handlers
-├── lane_detection.py   # Core pipeline (Week 3 Research Build)
-├── templates/
-│   └── index.html      # Responsive frontend (Inter font, Dark UI)
-├── requirements.txt    # Basic dependencies
-├── pyproject.toml      # Detailed project metadata and dependencies
-└── yolov8n.pt          # YOLO weights (auto-downloaded on first run)
+├── adas/
+│   ├── common/         # Shared utilities and dataclasses
+│   ├── config/         # SettingsManager for loading YAML configs
+│   ├── core/           # Geometry, projection, and tracking modules
+│   ├── perception/     # Vehicle and lane detection modules
+│   ├── pipelines/      # Execution pipelines (Vehicle, Geometry, Lane)
+│   └── visualization/  # Consolidated rendering engines
+├── configs/            # YAML configuration files
+├── scripts/            # Build/refactor utility scripts
+├── archive/            # Legacy experimental phases
+├── requirements.txt    # Dependencies
+└── app.py              # Flask server and MJPEG stream handlers
 ```
 
 ---
@@ -66,8 +71,11 @@ A modern lane detection system built with **Python**, **OpenCV**, and **Flask**.
    source .venv/bin/activate
    # Or on Windows: .venv\Scripts\activate
 
-   # Install dependencies
-   pip install -e .
+   # [Optional] Install GPU-specific PyTorch packages for NVIDIA GPUs:
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+   # Install the required dependencies
+   pip install -r requirements.txt
    ```
 
    > [!NOTE]
@@ -77,52 +85,40 @@ A modern lane detection system built with **Python**, **OpenCV**, and **Flask**.
 
 ## 🚦 Usage
 
-### Run the Web App
-Start the Flask server:
+### 🏃‍♂️ Run the Code
+To start the lane detection server, run the following command:
 ```bash
 python app.py
 ```
 Then open your browser at: `http://localhost:7860`
 
-### Optional CLI Preview
-You can also run a local OpenCV window preview:
-```bash
-python lane_detection.py path/to/video.mp4 --debug
-```
+### Run Individual Pipelines
+To run the specific pipelines directly from the command line:
 
-### Run Individual Phases
-To run the specific phases of the pipeline directly from the command line:
-
-- **Phase 00 (Profiling)**:
+- **Vehicle Perception Pipeline**:
   ```bash
-  python phase_00_profiling.py
+  python3 adas/pipelines/vehicle_pipeline.py --video adas/test-video_480.mp4
   ```
-- **Phase 01 (Perception)**:
+- **Geometry Pipeline**:
   ```bash
-  python phase_01_perception/run.py   --video "path_of viedo"
+  python3 adas/pipelines/geometry_pipeline.py --video adas/test-video_480.mp4 --estimator smoke
   ```
-- **Phase 02 (Geometry)**:
+- **Lane Pipeline**:
   ```bash
-  python phase_02_geometry/run.py  --video "path_of viedo"
-  ```
-- **Phase 03 (Lane Detection)**:
-  ```bash
-  python phase_03_lane/run.py --video "path_of viedo"
+  python3 adas/pipelines/lane_pipeline.py --video adas/test-video_480.mp4
   ```
 
 ---
 
-## 🔍 How It Works (Week 3 Pipeline)
+## 🔍 How It Works (Production Architecture)
 
-The processing pipeline in [`lane_detection.py`](lane_detection.py) follows these steps:
+The system has been refactored into a domain-driven architecture for production scalability:
 
-1. **Vehicle Detection**: YOLOv8 identifies cars, trucks, and motorbikes.
-2. **HLS Masking**: Extracts white and yellow pixels from the frame.
-3. **Vehicle Subtraction**: Subtracts vehicle regions from the HLS mask to "clean" the road area.
-4. **Dynamic ROI**: Sets the ROI height based on the "lead car" position or auto-calibration.
-5. **Edge Detection**: Applies Otsu thresholding and Canny edge detection.
-6. **Curve Fitting**: Uses RANSAC and Hough Transforms to find lane lines.
-7. **Smoothing**: Applies EMA and temporal buffers to prevent flickering.
+1. **Vehicle Perception (`adas/perception/vehicle`)**: YOLO-based vehicle detection, instance segmentation, and ground contact point extraction.
+2. **Lane Perception (`adas/perception/lane`)**: HLS masking, Otsu Canny edge detection, RANSAC curve fitting, and Operational Detection Zone (ODZ) filtering.
+3. **Core Geometry (`adas/core/geometry`)**: Homography projection, monocular 3D dimension estimation (SMOKE/RTM3D), footprint stabilization, and metric scaling.
+4. **Core Tracking (`adas/core/tracking`)**: DeepSORT/ByteTrack algorithms for temporal consistency and smoothing.
+5. **Visualization (`adas/visualization`)**: Decoupled rendering layers drawing structured data models using pre-configured styling tokens.
 
 ---
 

@@ -93,3 +93,54 @@ class FrameData:
     vehicles: List[VehicleState] = field(default_factory=list)
     lane_detection: Optional[LaneDetection] = None
     geometry_objects: List[VehicleGeometry] = field(default_factory=list)
+
+
+# ============================================================
+# 3D Perception Module — Data Types
+# ============================================================
+
+@dataclass
+class Detection2D:
+    """A single 2D object detection from YOLO."""
+    class_id: int
+    class_name: str
+    confidence: float
+    bbox: Tuple[int, int, int, int]  # (x1, y1, x2, y2)
+
+
+@dataclass
+class CameraIntrinsics:
+    """Pinhole camera intrinsic parameters."""
+    fx: float
+    fy: float
+    cx: float
+    cy: float
+
+
+@dataclass
+class DepthEstimate:
+    """Depth statistics for a single detected object's ROI."""
+    median_depth: float   # Representative depth (meters, after scaling)
+    mean_depth: float
+    depth_variance: float
+    valid_pixels: int
+
+
+@dataclass
+class Cuboid3D:
+    """A 3D bounding cuboid in the camera coordinate frame."""
+    center_3d: np.ndarray                     # (3,) — X, Y, Z
+    dimensions: Tuple[float, float, float]    # (length, width, height) in meters
+    corners_3d: np.ndarray                    # (8, 3) — 8 corner vertices
+    class_name: str
+    confidence: float
+    distance: float                           # Z-depth in meters
+
+
+@dataclass
+class ProjectedCuboid:
+    """A 3D cuboid projected back onto the 2D image plane."""
+    corners_2d: np.ndarray                    # (8, 2) — pixel coordinates
+    cuboid_3d: Cuboid3D
+    bbox_2d: Tuple[int, int, int, int]        # Original YOLO bounding box
+    depth_estimate: DepthEstimate

@@ -107,7 +107,10 @@ To run the specific pipelines directly from the command line:
   ```bash
   python3 adas/pipelines/lane_pipeline.py --video adas/test-video_480.mp4
   ```
-
+- **Depth**:
+  ```base
+  python3 scripts/run_perception_3d.py --video test-video_720.mp
+  ```
 ---
 
 ## 🔍 How It Works (Production Architecture)

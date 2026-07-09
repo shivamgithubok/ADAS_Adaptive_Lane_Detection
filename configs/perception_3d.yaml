@@ -1,0 +1,88 @@
+# ============================================================
+# 3D Perception Module Configuration
+# ============================================================
+
+# --- YOLO Detection Engine ---
+yolo:
+  model_path: "yolov8n.pt"           # Relative to project root
+  conf_threshold: 0.45
+  target_classes: [0, 1, 2, 3, 5, 7] # person, bicycle, car, motorcycle, bus, truck
+
+# --- Depth Anything V2 Engine ---
+depth:
+  encoder: "vits"
+  model_path: "depth_anything_v2_vits.pth"  # Relative to project root
+  input_size: 518
+  # Scale factor: converts relative depth output to approximate meters.
+  # Depth Anything V2 (ViT-S) outputs relative (affine-invariant) values.
+  # Tune this to your scene — larger values push objects farther.
+  depth_scale: 0.12
+
+# --- Class Dimension Priors (meters) ---
+# These are approximate real-world dimensions used to generate 3D cuboids.
+# Format: [length, width, height]
+class_priors:
+  car:
+    length: 4.5
+    width: 1.8
+    height: 1.5
+  truck:
+    length: 8.0
+    width: 2.5
+    height: 3.2
+  bus:
+    length: 12.0
+    width: 2.5
+    height: 3.5
+  person:
+    length: 0.5
+    width: 0.5
+    height: 1.7
+  motorcycle:
+    length: 2.2
+    width: 0.8
+    height: 1.2
+  bicycle:
+    length: 1.8
+    width: 0.6
+    height: 1.1
+
+# --- COCO Class ID → Name Mapping ---
+class_id_map:
+  0: "person"
+  1: "bicycle"
+  2: "car"
+  3: "motorcycle"
+  5: "bus"
+  7: "truck"
+
+# --- Depth Sampling ---
+depth_sampling:
+  # Shrink the ROI by this fraction on each side to avoid edge contamination
+  roi_shrink: 0.10
+  # Minimum valid pixels required to produce a depth estimate
+  min_valid_pixels: 10
+
+# --- Visualization Colors (BGR) ---
+visualization:
+  colors:
+    car: [255, 200, 0]           # Cyan-ish
+    truck: [0, 140, 255]         # Orange
+    bus: [0, 255, 255]           # Yellow
+    person: [0, 255, 100]        # Green
+    motorcycle: [255, 0, 200]    # Magenta
+    bicycle: [100, 255, 0]       # Lime
+    default: [200, 200, 200]     # Gray fallback
+  cuboid:
+    front_alpha: 0.25
+    front_thickness: 2
+    rear_thickness: 1
+    edge_thickness: 1
+  label:
+    font_scale: 0.55
+    thickness: 2
+    background_alpha: 0.6
+  depth_overlay:
+    enabled: true
+    alpha: 0.15
+    colormap: 2                  # cv2.COLORMAP_JET = 2
